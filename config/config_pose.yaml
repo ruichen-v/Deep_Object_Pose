@@ -9,7 +9,7 @@ weights: {
     # "meat":"meat_20.pth", 
     # "mustard":"mustard_60.pth", 
     "soup":"soup_60.pth", 
-    #"sugar":"sugar_60.pth"
+    # "sugar":"sugar_60.pth"
 }
 
 # Cuboid dimension in cm x,y,z
@@ -32,14 +32,25 @@ draw_colors: {
 }
 
 # Camera intrinsics (Logitech C920)
+# camera_settings: {
+#     "name": "logitech_c920",
+#     "width": 640,
+#     "height": 480,
+#     "fx": 641.5,
+#     "fy": 641.5,
+#     "cx": 320.0,
+#     "cy": 240.0
+# }
+
+# fetch 7
 camera_settings: {
-    "name": "logitech_c920",
+    "name": "fetch 7",
     "width": 640,
     "height": 480,
-    "fx": 641.5,
-    "fy": 641.5,
-    "cx": 320.0,
-    "cy": 240.0
+    "fx": 542.556,
+    "fy": 542.556,
+    "cx": 322.065,
+    "cy": 222.214
 }
 
 # Config params for DOPE
