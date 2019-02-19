@@ -22,9 +22,14 @@ from std_msgs.msg import String, Empty
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image as ImageSensor_msg
 from geometry_msgs.msg import PoseStamped
+from dope.msg import AdvYCBFrame as Adv_msg
 
 from PIL import Image
 from PIL import ImageDraw
+
+import os
+import tf
+import transforms3d as tf3
 
 # Import DOPE code
 rospack = rospkg.RosPack()
@@ -37,14 +42,18 @@ from detector import *
 g_bridge = CvBridge()
 g_img = None
 g_draw = None
+g_scene = None
 
 
 ### Basic functions
 def __image_callback(msg):
     '''Image callback'''
     global g_img
-    g_img = g_bridge.imgmsg_to_cv2(msg, "rgb8")
+    global g_scene
+    g_img = g_bridge.imgmsg_to_cv2(msg.image, "rgb8")
+    g_scene = msg.scene_name
     # cv2.imwrite('img.png', cv2.cvtColor(g_img, cv2.COLOR_BGR2RGB))  # for debugging
+    # print(g_scene)
 
 
 ### Code to visualize the neural network output
@@ -110,6 +119,7 @@ def run_dope_node(params, freq=5):
 
     global g_img
     global g_draw
+    global g_scene
 
     pubs = {}
     models = {}
@@ -181,7 +191,7 @@ def run_dope_node(params, freq=5):
     # Starts ROS listener
     rospy.Subscriber(
         topic_cam, 
-        ImageSensor_msg, 
+        Adv_msg, 
         __image_callback
     )
 
@@ -192,12 +202,21 @@ def run_dope_node(params, freq=5):
     print ("Running DOPE...  (Listening to camera topic: '{}')".format(topic_cam)) 
     print ("Ctrl-C to stop")
 
+    if os.path.isdir('./benchmark_out'):
+        os.system('rm -rf ./benchmark_out')
+
     while not rospy.is_shutdown():
-        if g_img is not None:
+        if g_img is not None and g_scene is not None:
             # Copy and draw image
             img_copy = g_img.copy()
             im = Image.fromarray(img_copy)
             g_draw = ImageDraw.Draw(im)
+
+            fn = os.path.join('./benchmark_out', g_scene, 'times1/pose_result.txt')
+            if not os.path.isdir(os.path.dirname(fn)):
+                os.makedirs(os.path.dirname(fn))
+                if os.path.exists(fn):
+                    os.remove(fn)
 
             for m in models:
                 # Detect object
@@ -207,11 +226,28 @@ def run_dope_node(params, freq=5):
                             g_img,
                             config_detect
                             )
-                
+                save_x = 0.0
+                save_y = 0.0
+                save_z = 0.0
+                save_rx = 0.0
+                save_ry = 0.0
+                save_rz = 0.0
                 # Publish pose and overlay cube on image
-                for i_r, result in enumerate(results):
-                    if result["location"] is None:
-                        continue
+                # for i_r, result in enumerate(results):
+                print('\n\ng_scene: ' + g_scene)
+                print('m: ' + m)
+
+                save_i_r = -1
+                for i, item in enumerate(results):
+                    if item["location"] is not None:
+                        save_i_r = i
+                        break
+
+                if save_i_r >= 0:
+
+                    result = results[save_i_r]
+                    assert(result["location"] is not None)
+
                     loc = result["location"]
                     ori = result["quaternion"]                    
                     msg = PoseStamped()
@@ -226,6 +262,19 @@ def run_dope_node(params, freq=5):
                     msg.pose.orientation.z = ori[2]
                     msg.pose.orientation.w = ori[3]
 
+                    # convert to XYZ RPY (rot is ZYX)
+                    poseRotMat = tf3.quaternions.quat2mat(ori)
+                    poseMat = np.append(poseRotMat, np.reshape(np.asarray(loc),(3,1)), axis=1)
+                    poseMat = np.append(poseMat, np.array([[0, 0, 0, 1]]), axis=0)
+
+                    # transform to baselink
+
+                    save_x = poseMat[0][3]
+                    save_y = poseMat[1][3]
+                    save_z = poseMat[2][3]
+
+                    save_rx, save_ry, save_rz = tf3.euler.mat2euler(poseMat, axes='szyx')
+
                     # Publish
                     pubs[m].publish(msg)
                     pub_dimension[m].publish(str(params['dimensions'][m]))
@@ -236,6 +285,22 @@ def run_dope_node(params, freq=5):
                         for pair in result['projected_points']:
                             points2d.append(tuple(pair))
                         DrawCube(points2d, draw_colors[m])
+                        print('Drawing...')
+                        print(result['projected_points'])
+                    else:
+                        print("None in proj points. Not drawing.")
+
+                    # save pose txt
+                    print('Pose found')
+                else:
+                    print('Pose NOT found')
+
+                print('Saving to ' + fn)
+                with open(fn, 'a') as f:
+                    f.write('{} {} {} {} {} {} {}\n'.format(
+                            m, save_x, save_y, save_z,save_rx, save_ry, save_rz
+                        )
+                    )
                 
             # Publish the image with results overlaid
             pub_rgb_dope_points.publish(
@@ -244,6 +309,13 @@ def run_dope_node(params, freq=5):
                     "bgr8"
                 )
             )
+
+            g_img = None
+            g_scene = None
+
+        else:
+            # print("waiting...")
+            pass
         rate.sleep()
 
 
