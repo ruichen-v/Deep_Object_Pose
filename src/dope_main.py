@@ -113,6 +113,9 @@ def DrawCube(points, color=(255, 0, 0)):
     DrawLine(points[0], points[5], color, lineWidthForDrawing)
     DrawLine(points[1], points[4], color, lineWidthForDrawing)
 
+def writeMat2File(fo, mat):
+    for line in np.matrix(mat):
+        np.savetxt(fo, line, fmt='%f')
 
 def run_dope_node(params, freq=5):
     '''Starts ROS node to listen to image topic, run DOPE, and publish DOPE results'''
@@ -212,13 +215,16 @@ def run_dope_node(params, freq=5):
             im = Image.fromarray(img_copy)
             g_draw = ImageDraw.Draw(im)
 
-            fn = os.path.join('./benchmark_out', g_scene, 'times1/pose_result.txt')
-            if not os.path.isdir(os.path.dirname(fn)):
-                os.makedirs(os.path.dirname(fn))
-                if os.path.exists(fn):
-                    os.remove(fn)
+            fn_PoseResult = os.path.join('./benchmark_out', g_scene, 'times1/pose_result.txt')
+            if not os.path.isdir(os.path.dirname(fn_PoseResult)):
+                os.makedirs(os.path.dirname(fn_PoseResult))
+            if os.path.exists(fn_PoseResult):
+                os.remove(fn_PoseResult)
 
             for m in models:
+
+                fn_debug = os.path.join('./benchmark_out', g_scene, 'times1/' + m + '_debug.txt')
+                
                 # Detect object
                 results = ObjectDetector.detect_object_in_image(
                             models[m].net, 
@@ -243,60 +249,100 @@ def run_dope_node(params, freq=5):
                         save_i_r = i
                         break
 
-                if save_i_r >= 0:
+                with open(fn_debug, 'w') as f_debug:
+                    if save_i_r >= 0:
 
-                    result = results[save_i_r]
-                    assert(result["location"] is not None)
+                        result = results[save_i_r]
+                        assert(result["location"] is not None)
 
-                    loc = result["location"]
-                    ori = result["quaternion"]                    
-                    msg = PoseStamped()
-                    msg.header.frame_id = params["frame_id"]
-                    msg.header.stamp = rospy.Time.now()
-                    CONVERT_SCALE_CM_TO_METERS = 100
-                    msg.pose.position.x = loc[0] / CONVERT_SCALE_CM_TO_METERS
-                    msg.pose.position.y = loc[1] / CONVERT_SCALE_CM_TO_METERS
-                    msg.pose.position.z = loc[2] / CONVERT_SCALE_CM_TO_METERS
-                    msg.pose.orientation.x = ori[0]
-                    msg.pose.orientation.y = ori[1]
-                    msg.pose.orientation.z = ori[2]
-                    msg.pose.orientation.w = ori[3]
+                        loc = result["location"]
+                        ori = result["quaternion"]                    
+                        msg = PoseStamped()
+                        msg.header.frame_id = params["frame_id"]
+                        msg.header.stamp = rospy.Time.now()
+                        CM2M = 100
+                        msg.pose.position.x = loc[0] / CM2M
+                        msg.pose.position.y = loc[1] / CM2M
+                        msg.pose.position.z = loc[2] / CM2M
+                        msg.pose.orientation.x = ori[0]
+                        msg.pose.orientation.y = ori[1]
+                        msg.pose.orientation.z = ori[2]
+                        msg.pose.orientation.w = ori[3]
 
-                    # convert to XYZ RPY (rot is ZYX)
-                    poseRotMat = tf3.quaternions.quat2mat(ori)
-                    poseMat = np.append(poseRotMat, np.reshape(np.asarray(loc),(3,1)), axis=1)
-                    poseMat = np.append(poseMat, np.array([[0, 0, 0, 1]]), axis=0)
+                        f_debug.write('Raw output - Camera view pose [x, y, z, qx, qy, qz, qw]:\n')
+                        f_debug.write('{},{},{},{},{},{},{}\n\n'.format(loc[0], loc[1], loc[2], ori[0], ori[1], ori[2], ori[3]))
 
-                    # transform to baselink
+                        # convert to XYZ RPY (rot is ZYX)
+                        T = [loc[0] / CM2M, loc[1] / CM2M, loc[2] / CM2M]
+                        R = tf3.quaternions.quat2mat([ori[3], ori[0], ori[1], ori[2]])
+                        Z = [1.0, 1.0, 1.0]
+                        poseMat = tf3.affines.compose(T, R, Z)
 
-                    save_x = poseMat[0][3]
-                    save_y = poseMat[1][3]
-                    save_z = poseMat[2][3]
+                        f_debug.write('PoseMat (camera):\n')
+                        writeMat2File(f_debug, poseMat)
+                        f_debug.write('\n')
 
-                    save_rx, save_ry, save_rz = tf3.euler.mat2euler(poseMat, axes='szyx')
+                        # print("Camera frame pose")
+                        # print(poseMat)
 
-                    # Publish
-                    pubs[m].publish(msg)
-                    pub_dimension[m].publish(str(params['dimensions'][m]))
+                        # transform to baselink
+                        T = [0.00762554, 0.793312, 0.991729]
+                        R = tf3.quaternions.quat2mat([-0.188503, -0.678222, 0.681912, -0.19869])
+                        Z = [1.0, 1.0, 1.0]
+                        transMat_base2camera = tf3.affines.compose(T, R, Z)
+                        transMat_camera2base = np.linalg.inv(transMat_base2camera)
 
-                    # Draw the cube
-                    if None not in result['projected_points']:
-                        points2d = []
-                        for pair in result['projected_points']:
-                            points2d.append(tuple(pair))
-                        DrawCube(points2d, draw_colors[m])
-                        print('Drawing...')
-                        print(result['projected_points'])
+                        f_debug.write('transMat base2camera (coordinate trans):\n')
+                        writeMat2File(f_debug, transMat_base2camera)
+                        f_debug.write('\n')
+                        f_debug.write('transMat camera2base (coordinate trans):\n')
+                        writeMat2File(f_debug, transMat_camera2base)
+                        f_debug.write('\n')
+
+                        # print("transMat_camera2base")
+                        # print(transMat_camera2base)
+
+                        poseMat = np.matmul(transMat_camera2base, poseMat)
+                        # print("Baselink frame pose")
+                        # print(poseMat)
+
+                        f_debug.write('PoseMat (baselink):\n')
+                        writeMat2File(f_debug, poseMat)
+                        f_debug.write('\n')
+
+                        save_x = poseMat[0][3]
+                        save_y = poseMat[1][3]
+                        save_z = poseMat[2][3]
+
+                        save_rx, save_ry, save_rz = tf3.euler.mat2euler(poseMat, axes='szyx')
+
+                        f_debug.write('Baselink 6D: x, y, z, r, p, y (ROT ZYX):\n')
+                        f_debug.write('{},{},{},{},{},{}\n'.format(save_x, save_y, save_z, save_rx, save_ry, save_rz))
+
+                        # Publish
+                        pubs[m].publish(msg)
+                        pub_dimension[m].publish(str(params['dimensions'][m]))
+
+                        # Draw the cube
+                        if None not in result['projected_points']:
+                            points2d = []
+                            for pair in result['projected_points']:
+                                points2d.append(tuple(pair))
+                            DrawCube(points2d, draw_colors[m])
+                            # print('Drawing...')
+                            # print(result['projected_points'])
+                        else:
+                            # print("None in proj points. Not drawing.")
+                            pass
+
+                        # save pose txt
+                        print('Pose found')
                     else:
-                        print("None in proj points. Not drawing.")
+                        f_debug.write('NAN\n')
+                        print('Pose NOT found')
 
-                    # save pose txt
-                    print('Pose found')
-                else:
-                    print('Pose NOT found')
-
-                print('Saving to ' + fn)
-                with open(fn, 'a') as f:
+                print('Saving to ' + fn_PoseResult)
+                with open(fn_PoseResult, 'a') as f:
                     f.write('{} {} {} {} {} {} {}\n'.format(
                             m, save_x, save_y, save_z,save_rx, save_ry, save_rz
                         )

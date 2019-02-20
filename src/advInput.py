@@ -22,9 +22,9 @@ topic = '/dope/webcam_rgb_raw'  # topic for publishing
 class Input_t:    
 
     def __init__(self):
-        self.scene_id_list = range(1, 2)
-        self.scene_setting_list = ['B','D']
-        # , 'D', 'D1', 'D2', 'O1', 'O2', 'O3']
+        self.scene_id_list = range(1, 41)
+        self.scene_setting_list = ['B', 'D', 'D1', 'D2', 'O1', 'O2', 'O3']
+        # 'D', 'D1', 'D2', 'O1', 'O2', 'O3']
         self.scene_names = []
         self.current_scene_id = 0
         self.done = False
@@ -53,6 +53,7 @@ class Input_t:
 Input = Input_t()
 
 def publish_images(freq=0.5):
+
     rospy.init_node('dope_webcam_rgb_raw', anonymous=True)
     images_publisher = rospy.Publisher(topic, Adv_msg, queue_size=10)
     rate = rospy.Rate(freq)
