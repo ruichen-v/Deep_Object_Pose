@@ -208,6 +208,25 @@ def run_dope_node(params, freq=5):
     if os.path.isdir('./benchmark_out'):
         os.system('rm -rf ./benchmark_out')
 
+    transMat_ycbObj2dopeObj = {}
+    Z = [1.0, 1.0, 1.0]
+
+    T = [0.0, -0.00213, -0.00554]
+    R = tf3.quaternions.quat2mat([0.5, -0.5, 0.5, -0.5]) # 003_cracker_box
+    transMat_ycbObj2dopeObj['003_cracker_box'] = np.linalg.inv(tf3.affines.compose(T, R, Z))
+
+    T = [0.00197, -0.00793, 0.00071]
+    R = tf3.quaternions.quat2mat([0.707, 0.707, 0.017, -0.017]) # 010_potted_meat_can
+    transMat_ycbObj2dopeObj['010_potted_meat_can'] = np.linalg.inv(tf3.affines.compose(T, R, Z))
+
+    T = [0.00035, -0.00831, -0.00142]
+    R = tf3.quaternions.quat2mat([0.707, 0.707, -0.0, 0.0]) # 005_tomato_soup_can
+    transMat_ycbObj2dopeObj['005_tomato_soup_can'] = np.linalg.inv(tf3.affines.compose(T, R, Z))
+
+    T = [0.0, 0.0113, 0.00247]
+    R = tf3.quaternions.quat2mat([0.693, 0.693, -0.142, 0.142]) # 006_mustard_bottle
+    transMat_ycbObj2dopeObj['006_mustard_bottle'] = np.linalg.inv(tf3.affines.compose(T, R, Z))
+
     while not rospy.is_shutdown():
         if g_img is not None and g_scene is not None:
             # Copy and draw image
@@ -238,6 +257,7 @@ def run_dope_node(params, freq=5):
                 save_rx = 0.0
                 save_ry = 0.0
                 save_rz = 0.0
+                save_rw = 0.0
                 # Publish pose and overlay cube on image
                 # for i_r, result in enumerate(results):
                 print('\n\ng_scene: ' + g_scene)
@@ -291,6 +311,7 @@ def run_dope_node(params, freq=5):
                         Z = [1.0, 1.0, 1.0]
                         transMat_base2camera = tf3.affines.compose(T, R, Z)
                         transMat_camera2base = np.linalg.inv(transMat_base2camera)
+                        # transMat_camera2base = transMat_base2camera
 
                         f_debug.write('transMat base2camera (coordinate trans):\n')
                         writeMat2File(f_debug, transMat_base2camera)
@@ -302,7 +323,7 @@ def run_dope_node(params, freq=5):
                         # print("transMat_camera2base")
                         # print(transMat_camera2base)
 
-                        poseMat = np.matmul(transMat_camera2base, poseMat)
+                        poseMat = np.matmul(transMat_camera2base, np.matmul(poseMat, transMat_ycbObj2dopeObj[m]))
                         # print("Baselink frame pose")
                         # print(poseMat)
 
@@ -314,10 +335,12 @@ def run_dope_node(params, freq=5):
                         save_y = poseMat[1][3]
                         save_z = poseMat[2][3]
 
-                        save_rx, save_ry, save_rz = tf3.euler.mat2euler(poseMat, axes='szyx')
+                        _, R_pose, _, _ = tf3.affines.decompose44(poseMat)
 
-                        f_debug.write('Baselink 6D: x, y, z, r, p, y (ROT ZYX):\n')
-                        f_debug.write('{},{},{},{},{},{}\n'.format(save_x, save_y, save_z, save_rx, save_ry, save_rz))
+                        save_rw, save_rx, save_ry, save_rz = tf3.quaternions.mat2quat(R_pose)
+
+                        f_debug.write('Baselink 6D: x, y, z, rw, rx, ry, rz:\n')
+                        f_debug.write('{},{},{},{},{},{},{}\n'.format(save_x, save_y, save_z, save_rw, save_rx, save_ry, save_rz))
 
                         # Publish
                         pubs[m].publish(msg)
@@ -329,6 +352,8 @@ def run_dope_node(params, freq=5):
                             for pair in result['projected_points']:
                                 points2d.append(tuple(pair))
                             DrawCube(points2d, draw_colors[m])
+                            f_debug.write('\nprojected_points\n')
+                            writeMat2File(f_debug, result['projected_points'])
                             # print('Drawing...')
                             # print(result['projected_points'])
                         else:
@@ -343,8 +368,8 @@ def run_dope_node(params, freq=5):
 
                 print('Saving to ' + fn_PoseResult)
                 with open(fn_PoseResult, 'a') as f:
-                    f.write('{} {} {} {} {} {} {}\n'.format(
-                            m, save_x, save_y, save_z,save_rx, save_ry, save_rz
+                    f.write('{} {} {} {} {} {} {} {}\n'.format(
+                            m, save_x, save_y, save_z, save_rw, save_rx, save_ry, save_rz
                         )
                     )
                 
